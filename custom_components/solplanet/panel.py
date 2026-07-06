@@ -106,6 +106,13 @@ class SolplanetDataView(HomeAssistantView):
     requires_auth = False
 
     async def get(self, request):
+        try:
+            return await self._get_data(request)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Solplanet panel data error: %s", exc)
+            return self.json({"error": str(exc)}, status_code=500)
+
+    async def _get_data(self, request):
         hass: HomeAssistant = request.app["hass"]
         coord = _get_coordinator(hass)
         if not coord:
@@ -166,10 +173,10 @@ class SolplanetDataView(HomeAssistantView):
                 "eaco":   getattr(bdata, "eaco", None),
                 "charge_max":    getattr(binfo, "charge_max",    None),
                 "discharge_max": getattr(binfo, "discharge_max", None),
-                "work_mode_name": work_modes.get("selected", {}).name if hasattr(work_modes.get("selected"), "name") else None,
+                "work_mode_name": getattr(work_modes.get("selected"), "name", None),
                 "work_modes_all": [
-                    {"name": m.name, "type": m.battery_type, "mod_r": m.mod_r}
-                    for m in work_modes.get("all", [])
+                    {"name": m.name, "type": getattr(m, "battery_type", 0), "mod_r": getattr(m, "mod_r", i)}
+                    for i, m in enumerate(work_modes.get("all") or [])
                 ],
                 "schedule": schedule,
             })
@@ -179,11 +186,16 @@ class SolplanetDataView(HomeAssistantView):
         for sn, entry in data.get(met_id, {}).items():
             mdata = entry.get("data")
             app_data = entry.get("app_data", {}) or {}
-            pac = getattr(mdata, "pac", None) or app_data.get("pac")
-            itd = getattr(mdata, "itd", None) or app_data.get("itd")
-            otd = getattr(mdata, "otd", None) or app_data.get("otd")
-            iet = getattr(mdata, "iet", None) or app_data.get("iet")
-            oet = getattr(mdata, "oet", None) or app_data.get("oet")
+            # V2: pac in app_data is negative=export, positive=import (Watts)
+            # V1: pac is on mdata directly
+            pac = getattr(mdata, "pac", None)
+            if pac is None:
+                raw = app_data.get("activePower") or app_data.get("pac")
+                pac = raw
+            itd = getattr(mdata, "itd", None) or app_data.get("importToday") or app_data.get("itd")
+            otd = getattr(mdata, "otd", None) or app_data.get("exportToday") or app_data.get("otd")
+            iet = getattr(mdata, "iet", None) or app_data.get("importTotal") or app_data.get("iet")
+            oet = getattr(mdata, "oet", None) or app_data.get("exportTotal") or app_data.get("oet")
             meters.append({"sn": sn, "pac": pac, "itd": itd, "otd": otd, "iet": iet, "oet": oet})
 
         return self.json({
