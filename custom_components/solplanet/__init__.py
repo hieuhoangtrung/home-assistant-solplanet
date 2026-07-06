@@ -28,6 +28,7 @@ from .const import (
     METER_MODEL_NAMES,
 )
 from .coordinator import SolplanetDataUpdateCoordinator
+from .panel import async_register_panel
 from .services import async_setup_services
 
 PLATFORMS: list[Platform] = [
@@ -53,6 +54,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
     # Register services once for the integration domain.
     await async_setup_services(hass)
+
+    # Register the battery dashboard panel (sidebar + API views).
+    await async_register_panel(hass)
 
     return True
 

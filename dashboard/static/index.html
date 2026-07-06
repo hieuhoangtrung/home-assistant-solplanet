@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Solplanet Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d2e;
+      --surface2: #22263a;
+      --border: #2e3250;
+      --accent: #f59e0b;
+      --green: #22c55e;
+      --blue: #3b82f6;
+      --red: #ef4444;
+      --purple: #a855f7;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+
+    /* ---- NAV ---- */
+    nav {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+      padding: 0 20px; height: 56px;
+      position: sticky; top: 0; z-index: 100;
+    }
+    nav .logo { font-size: 1.1rem; font-weight: 700; color: var(--accent); flex: 1; }
+    nav .logo span { color: var(--text); font-weight: 400; }
+    .nav-tabs { display: flex; gap: 4px; }
+    .nav-tab {
+      background: none; border: none; color: var(--muted);
+      padding: 6px 14px; border-radius: 8px; cursor: pointer;
+      font-size: 0.88rem; font-weight: 500; transition: all .15s;
+    }
+    .nav-tab.active { background: var(--accent); color: #000; }
+    .nav-tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted); margin-left: 12px; flex-shrink: 0;
+    }
+    .status-dot.ok { background: var(--green); }
+    .status-dot.err { background: var(--red); }
+
+    /* ---- PAGES ---- */
+    .page { display: none; padding: 20px; max-width: 1400px; margin: 0 auto; }
+    .page.active { display: block; }
+
+    /* ---- CARDS ---- */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px;
+    }
+    .card-title {
+      font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .08em; color: var(--muted); margin-bottom: 12px;
+    }
+    .grid { display: grid; gap: 16px; }
+    .grid-3 { grid-template-columns: repeat(3, 1fr); }
+    .grid-2 { grid-template-columns: repeat(2, 1fr); }
+    .grid-4 { grid-template-columns: repeat(4, 1fr); }
+
+    /* ---- POWER FLOW ---- */
+    .flow-wrap {
+      display: flex; align-items: center; justify-content: center;
+      gap: 0; flex-wrap: wrap; padding: 16px 0;
+    }
+    .flow-node {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      min-width: 120px;
+    }
+    .flow-icon {
+      width: 72px; height: 72px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.8rem; border: 3px solid transparent;
+    }
+    .flow-icon.pv   { background: rgba(251,191,36,.15); border-color: #f59e0b; }
+    .flow-icon.grid { background: rgba(59,130,246,.15); border-color: #3b82f6; }
+    .flow-icon.home { background: rgba(168,85,247,.15); border-color: #a855f7; }
+    .flow-icon.bat  { background: rgba(34,197,94,.15);  border-color: #22c55e; }
+    .flow-label { font-size: 0.8rem; color: var(--muted); }
+    .flow-value { font-size: 1.1rem; font-weight: 700; }
+    .flow-arrow {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      width: 60px; position: relative;
+    }
+    .arrow-line {
+      height: 3px; width: 100%; position: relative; overflow: visible;
+    }
+    .arrow-line::after {
+      content: ''; position: absolute; right: -1px; top: -4px;
+      border: 5px solid transparent;
+    }
+    .arr-right::after { border-left-color: currentColor; }
+    .arr-left::after  { border-right-color: currentColor; right: auto; left: -1px; }
+    .arrow-power { font-size: 0.7rem; color: var(--muted); margin-top: 4px; }
+
+    /* ---- BIG STAT ---- */
+    .big-stat { text-align: center; }
+    .big-stat .value { font-size: 2rem; font-weight: 700; }
+    .big-stat .unit  { font-size: 0.85rem; color: var(--muted); margin-left: 4px; }
+    .big-stat .label { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
+
+    /* ---- BATTERY RING ---- */
+    .bat-ring-wrap { display: flex; justify-content: center; align-items: center; padding: 8px 0; }
+    .bat-ring { position: relative; width: 140px; height: 140px; }
+    .bat-ring svg { position: absolute; top: 0; left: 0; transform: rotate(-90deg); }
+    .bat-ring-center {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 2px;
+    }
+    .bat-ring-center .pct { font-size: 1.6rem; font-weight: 800; }
+    .bat-ring-center .sub { font-size: 0.7rem; color: var(--muted); }
+
+    /* ---- STATS ROW ---- */
+    .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+    .stat-row:last-child { border-bottom: none; }
+    .stat-row .key { font-size: 0.82rem; color: var(--muted); }
+    .stat-row .val { font-size: 0.9rem; font-weight: 600; }
+
+    /* ---- CHART ---- */
+    .chart-wrap { position: relative; height: 200px; }
+    canvas.chart { width: 100% !important; height: 100% !important; }
+
+    /* ---- BADGE ---- */
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 99px;
+      font-size: 0.75rem; font-weight: 600;
+    }
+    .badge-green  { background: rgba(34,197,94,.2);  color: var(--green); }
+    .badge-blue   { background: rgba(59,130,246,.2); color: var(--blue); }
+    .badge-red    { background: rgba(239,68,68,.2);  color: var(--red); }
+    .badge-amber  { background: rgba(245,158,11,.2); color: var(--accent); }
+    .badge-purple { background: rgba(168,85,247,.2); color: var(--purple); }
+    .badge-muted  { background: var(--surface2); color: var(--muted); }
+
+    /* ---- FORMS ---- */
+    label { font-size: 0.82rem; color: var(--muted); display: block; margin-bottom: 4px; }
+    input, select {
+      width: 100%; background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; padding: 8px 12px;
+      font-size: 0.9rem; outline: none; transition: border .15s;
+    }
+    input:focus, select:focus { border-color: var(--accent); }
+    input[type=range] { padding: 4px 0; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* ---- BUTTONS ---- */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px; justify-content: center;
+      border: none; border-radius: 8px; padding: 9px 18px;
+      font-size: 0.88rem; font-weight: 600; cursor: pointer; transition: opacity .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary  { background: var(--accent); color: #000; }
+    .btn-danger   { background: var(--red); color: #fff; }
+    .btn-ghost    { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-sm       { padding: 6px 12px; font-size: 0.8rem; }
+    .btn-block    { width: 100%; }
+
+    /* ---- SETUP overlay ---- */
+    #setup-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.7);
+      display: flex; align-items: center; justify-content: center; z-index: 999;
+    }
+    #setup-overlay.hidden { display: none; }
+    .setup-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 32px; width: 480px; max-width: 95vw;
+    }
+    .setup-card h2 { margin-bottom: 6px; font-size: 1.3rem; }
+    .setup-card p { color: var(--muted); font-size: 0.9rem; margin-bottom: 24px; }
+
+    /* ---- SCHEDULE TABLE ---- */
+    .sched-day { margin-bottom: 16px; }
+    .sched-day-title { font-size: 0.82rem; font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+    .sched-slot {
+      display: flex; gap: 8px; align-items: center;
+      background: var(--surface2); border-radius: 8px; padding: 8px 12px; margin-bottom: 6px;
+    }
+    .sched-slot .time { font-size: 0.85rem; font-weight: 600; flex: 1; }
+    .sched-slot .mode-badge { font-size: 0.72rem; }
+    .slot-editor {
+      display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; align-items: end;
+      background: var(--surface2); border-radius: 8px; padding: 10px; margin-bottom: 8px;
+    }
+
+    /* ---- TOAST ---- */
+    #toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 20px;
+      font-size: 0.88rem; z-index: 9999;
+      opacity: 0; transform: translateY(10px);
+      transition: all .25s; pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.success { border-color: var(--green); color: var(--green); }
+    #toast.error   { border-color: var(--red); color: var(--red); }
+
+    /* ---- SPINNER ---- */
+    .spinner {
+      width: 20px; height: 20px; border: 3px solid var(--border);
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin .7s linear infinite; display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ---- MODE BUTTONS ---- */
+    .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .mode-btn {
+      background: var(--surface2); border: 2px solid var(--border);
+      border-radius: 10px; padding: 14px; cursor: pointer;
+      text-align: left; transition: all .15s; color: var(--text);
+    }
+    .mode-btn:hover { border-color: var(--accent); }
+    .mode-btn.selected { border-color: var(--accent); background: rgba(245,158,11,.1); }
+    .mode-btn .mode-name { font-size: 0.9rem; font-weight: 600; }
+    .mode-btn .mode-desc { font-size: 0.75rem; color: var(--muted); margin-top: 4px; }
+
+    @media (max-width: 768px) {
+      .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
+      .grid-2 { grid-template-columns: 1fr; }
+      .form-row { grid-template-columns: 1fr; }
+      .mode-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 480px) {
+      .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Setup overlay -->
+<div id="setup-overlay" class="hidden">
+  <div class="setup-card">
+    <h2>🔌 Connect to Inverter</h2>
+    <p>Enter the IP address of your Solplanet inverter on the local network, or scan to find it automatically.</p>
+    <div class="form-group" style="margin-bottom:12px">
+      <label>Inverter IP Address</label>
+      <input type="text" id="setup-ip" placeholder="e.g. 192.168.1.100"/>
+    </div>
+    <div class="form-group" style="margin-bottom:20px">
+      <label>Port (default 8484)</label>
+      <input type="number" id="setup-port" value="8484"/>
+    </div>
+    <div style="display:flex; gap:10px; margin-bottom:16px;">
+      <button class="btn btn-primary" style="flex:1" onclick="saveConfig()">Connect</button>
+      <button class="btn btn-ghost" onclick="startScan()">🔍 Scan Network</button>
+    </div>
+    <div id="scan-results" style="display:none">
+      <div class="card-title" style="margin-bottom:8px">Found on network:</div>
+      <div id="scan-list"></div>
+    </div>
+    <div id="scan-spinner" style="display:none; text-align:center; padding:16px;">
+      <span class="spinner"></span>
+      <span style="margin-left:10px; color:var(--muted)">Scanning network...</span>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Nav -->
+<nav>
+  <div class="logo">☀️ Solplanet <span>Dashboard</span></div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="showPage('overview')">Overview</button>
+    <button class="nav-tab" onclick="showPage('analytics')">Analytics</button>
+    <button class="nav-tab" onclick="showPage('settings')">Settings</button>
+  </div>
+  <div class="status-dot" id="conn-dot" title="Connection status"></div>
+  <button class="btn btn-ghost btn-sm" onclick="showSetup()">⚙️ Config</button>
+</nav>
+
+<!-- ================================================================ OVERVIEW -->
+<div class="page active" id="page-overview">
+
+  <!-- Power Flow -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title">Live Power Flow</div>
+    <div class="flow-wrap" id="flow-wrap">
+      <!-- PV -->
+      <div class="flow-node">
+        <div class="flow-icon pv">☀️</div>
+        <div class="flow-value" id="flow-pv">-- W</div>
+        <div class="flow-label">Solar PV</div>
+      </div>
+      <div class="flow-arrow">
+        <div class="arrow-line arr-right" style="background:var(--accent); color:var(--accent)"></div>
+        <div class="arrow-power" id="arr-pv-inv"></div>
+      </div>
+      <!-- Inverter hub -->
+      <div class="flow-node">
+        <div class="flow-icon pv" style="font-size:1.4rem; width:80px; height:80px;">🔄</div>
+        <div class="flow-value" id="flow-inv">-- W</div>
+        <div class="flow-label">Inverter</div>
+      </div>
+      <!-- Grid arrow -->
+      <div class="flow-arrow" style="flex-direction:column; gap:4px;">
+        <div class="arrow-line" id="grid-arrow-line" style="background:var(--blue); color:var(--blue)"></div>
+        <div class="arrow-power" id="flow-grid-label">Grid</div>
+        <div style="font-size:1.1rem;" id="flow-grid-icon">⚡</div>
+        <div class="flow-value" id="flow-grid">-- W</div>
+      </div>
+      <!-- Home -->
+      <div class="flow-node">
+        <div class="flow-icon home">🏠</div>
+        <div class="flow-value" id="flow-home">-- W</div>
+        <div class="flow-label">Home Load</div>
+      </div>
+    </div>
+    <!-- Battery row -->
+    <div style="display:flex; justify-content:center; margin-top:8px;">
+      <div class="flow-node">
+        <div class="flow-icon bat">🔋</div>
+        <div class="flow-value" id="flow-bat">-- W</div>
+        <div class="flow-label">Battery</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats row -->
+  <div class="grid grid-4" style="margin-bottom:16px">
+    <div class="card">
+      <div class="card-title">Battery SOC</div>
+      <div class="bat-ring-wrap">
+        <div class="bat-ring">
+          <svg viewBox="0 0 140 140" width="140" height="140">
+            <circle cx="70" cy="70" r="54" fill="none" stroke="var(--border)" stroke-width="12"/>
+            <circle id="soc-circle" cx="70" cy="70" r="54" fill="none"
+              stroke="var(--green)" stroke-width="12"
+              stroke-dasharray="339.29" stroke-dashoffset="339.29"
+              stroke-linecap="round"/>
+          </svg>
+          <div class="bat-ring-center">
+            <div class="pct" id="soc-pct">--</div>
+            <div class="sub">SOC</div>
+          </div>
+        </div>
+      </div>
+      <div class="stat-row">
+        <span class="key">Status</span>
+        <span class="val" id="bat-status">--</span>
+      </div>
+      <div class="stat-row">
+        <span class="key">Temperature</span>
+        <span class="val" id="bat-temp">--</span>
+      </div>
+      <div class="stat-row">
+        <span class="key">SOH</span>
+        <span class="val" id="bat-soh">--</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Today's Energy</div>
+      <div style="display:flex; flex-direction:column; gap:12px; margin-top:8px;">
+        <div class="big-stat">
+          <span class="value" style="color:var(--accent)" id="today-pv">--</span>
+          <span class="unit">kWh</span>
+          <div class="label">☀️ PV Generated</div>
+        </div>
+        <div class="big-stat">
+          <span class="value" style="color:var(--green)" id="today-bat-in">--</span>
+          <span class="unit">kWh</span>
+          <div class="label">🔋 Battery Charged</div>
+        </div>
+        <div class="big-stat">
+          <span class="value" style="color:var(--blue)" id="today-bat-out">--</span>
+          <span class="unit">kWh</span>
+          <div class="label">🔋 Battery Discharged</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Grid</div>
+      <div style="display:flex; flex-direction:column; gap:12px; margin-top:8px;">
+        <div class="big-stat">
+          <span class="value" style="color:var(--red)" id="today-import">--</span>
+          <span class="unit">kWh</span>
+          <div class="label">⬇️ Imported Today</div>
+        </div>
+        <div class="big-stat">
+          <span class="value" style="color:var(--green)" id="today-export">--</span>
+          <span class="unit">kWh</span>
+          <div class="label">⬆️ Exported Today</div>
+        </div>
+        <div style="margin-top:4px">
+          <div class="stat-row">
+            <span class="key">Total Imported</span>
+            <span class="val" id="total-import">--</span>
+          </div>
+          <div class="stat-row">
+            <span class="key">Total Exported</span>
+            <span class="val" id="total-export">--</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Inverter</div>
+      <div class="stat-row"><span class="key">Model</span><span class="val" id="inv-model">--</span></div>
+      <div class="stat-row"><span class="key">Serial</span><span class="val" id="inv-sn" style="font-size:0.75rem">--</span></div>
+      <div class="stat-row"><span class="key">Status</span><span class="val" id="inv-status">--</span></div>
+      <div class="stat-row"><span class="key">Temperature</span><span class="val" id="inv-temp">--</span></div>
+      <div class="stat-row"><span class="key">Frequency</span><span class="val" id="inv-freq">--</span></div>
+      <div class="stat-row"><span class="key">Total PV</span><span class="val" id="inv-total">--</span></div>
+      <div class="stat-row"><span class="key">Today PV</span><span class="val" id="inv-today">--</span></div>
+    </div>
+  </div>
+
+  <!-- Live chart -->
+  <div class="card">
+    <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Live Power (last 30 readings)</span>
+      <span style="font-size:0.75rem; color:var(--muted)">Auto-refresh every 10s</span>
+    </div>
+    <div class="chart-wrap" style="height:220px">
+      <canvas id="live-chart"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ ANALYTICS -->
+<div class="page" id="page-analytics">
+  <div class="grid grid-2" style="margin-bottom:16px">
+    <div class="card">
+      <div class="card-title">Energy Overview</div>
+      <div class="chart-wrap" style="height:240px">
+        <canvas id="energy-chart"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Power Distribution</div>
+      <div class="chart-wrap" style="height:240px">
+        <canvas id="donut-chart"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="grid grid-3">
+    <div class="card">
+      <div class="card-title">Battery Lifetime</div>
+      <div class="stat-row"><span class="key">Total Charged</span><span class="val" id="life-bat-in">--</span></div>
+      <div class="stat-row"><span class="key">Total Discharged</span><span class="val" id="life-bat-out">--</span></div>
+      <div class="stat-row"><span class="key">AC Charged</span><span class="val" id="life-ac-in">--</span></div>
+      <div class="stat-row"><span class="key">AC Discharged</span><span class="val" id="life-ac-out">--</span></div>
+      <div class="stat-row"><span class="key">Battery Voltage</span><span class="val" id="bat-voltage">--</span></div>
+      <div class="stat-row"><span class="key">Battery Current</span><span class="val" id="bat-current">--</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Inverter Lifetime</div>
+      <div class="stat-row"><span class="key">Total Generation</span><span class="val" id="life-pv">--</span></div>
+      <div class="stat-row"><span class="key">Today Generation</span><span class="val" id="life-pv-today">--</span></div>
+      <div class="stat-row"><span class="key">Running Hours</span><span class="val" id="life-hours">--</span></div>
+      <div class="stat-row"><span class="key">AC Voltage</span><span class="val" id="inv-vac">--</span></div>
+      <div class="stat-row"><span class="key">AC Current</span><span class="val" id="inv-iac">--</span></div>
+      <div class="stat-row"><span class="key">Power Factor</span><span class="val" id="inv-pf">--</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Self-Sufficiency</div>
+      <div style="text-align:center; padding:24px 0;">
+        <div style="font-size:2.5rem; font-weight:800; color:var(--green)" id="self-suf">--%</div>
+        <div style="font-size:0.82rem; color:var(--muted); margin-top:6px">Solar + Battery vs Total Load</div>
+      </div>
+      <div class="stat-row"><span class="key">Solar Contribution</span><span class="val" id="solar-contrib">--</span></div>
+      <div class="stat-row"><span class="key">Battery Contribution</span><span class="val" id="bat-contrib">--</span></div>
+      <div class="stat-row"><span class="key">Grid Dependency</span><span class="val" id="grid-dep">--</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ SETTINGS -->
+<div class="page" id="page-settings">
+  <div class="grid grid-2">
+
+    <!-- Work Mode -->
+    <div class="card">
+      <div class="card-title">Battery Work Mode</div>
+      <div class="mode-grid" id="mode-grid">
+        <!-- populated by JS -->
+      </div>
+      <button class="btn btn-primary btn-block" style="margin-top:16px" onclick="applyWorkMode()">Apply Mode</button>
+    </div>
+
+    <!-- SOC Limits -->
+    <div class="card">
+      <div class="card-title">Battery SOC Limits</div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Max Charge Limit: <span id="soc-max-val" style="color:var(--accent)">100%</span></label>
+        <input type="range" id="soc-max" min="10" max="100" step="1" value="100"
+          oninput="document.getElementById('soc-max-val').textContent=this.value+'%'"/>
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Min Discharge Limit: <span id="soc-min-val" style="color:var(--blue)">10%</span></label>
+        <input type="range" id="soc-min" min="10" max="100" step="1" value="10"
+          oninput="document.getElementById('soc-min-val').textContent=this.value+'%'"/>
+      </div>
+      <div style="display:flex; gap:4px; margin-top:4px; font-size:0.78rem; color:var(--muted)">
+        <span>10%</span><div style="flex:1; border-top:1px dashed var(--border); margin-top:8px"></div><span>100%</span>
+      </div>
+      <button class="btn btn-primary btn-block" style="margin-top:16px" onclick="applySocLimits()">Apply Limits</button>
+      <div id="soc-sn-note" style="font-size:0.75rem; color:var(--muted); margin-top:8px;"></div>
+    </div>
+
+    <!-- Schedule Power -->
+    <div class="card">
+      <div class="card-title">Schedule Power Limits</div>
+      <div class="form-row" style="margin-bottom:16px">
+        <div class="form-group">
+          <label>Max Charge Power (Pin W)</label>
+          <input type="number" id="sched-pin" placeholder="e.g. 3000" min="0" step="100"/>
+        </div>
+        <div class="form-group">
+          <label>Max Discharge Power (Pout W)</label>
+          <input type="number" id="sched-pout" placeholder="e.g. 3000" min="0" step="100"/>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-block" onclick="applySchedulePower()">Apply Power Limits</button>
+    </div>
+
+    <!-- Schedule Slots -->
+    <div class="card">
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Charge / Discharge Schedule</span>
+        <button class="btn btn-ghost btn-sm" onclick="loadSchedule()">↺ Reload</button>
+      </div>
+      <div id="schedule-editor">
+        <div style="color:var(--muted); font-size:0.85rem; text-align:center; padding:20px">Loading schedule...</div>
+      </div>
+      <button class="btn btn-primary btn-block" style="margin-top:16px" onclick="saveSchedule()">Save Schedule</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- Chart.js from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script>
+// ============================================================
+// State
+// ============================================================
+let currentData = null;
+let liveHistory = [];
+let liveChart = null, energyChart = null, donutChart = null;
+let selectedMode = null;
+let scheduleState = {};  // day -> [{start, duration, mode}]
+let batterySnList = [];
+
+// ============================================================
+// Toast
+// ============================================================
+function toast(msg, type='success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show ${type}`;
+  setTimeout(() => { el.className = ''; }, 3000);
+}
+
+// ============================================================
+// Setup / Config
+// ============================================================
+async function loadInitialConfig() {
+  const cfg = await fetch('/api/config').then(r=>r.json()).catch(()=>({inverter_ip:''}));
+  if (!cfg.inverter_ip) {
+    showSetup();
+  } else {
+    document.getElementById('setup-ip').value = cfg.inverter_ip;
+    document.getElementById('setup-port').value = cfg.inverter_port || 80;
+    startPolling();
+  }
+}
+
+function showSetup() {
+  document.getElementById('setup-overlay').classList.remove('hidden');
+}
+
+async function saveConfig() {
+  const ip = document.getElementById('setup-ip').value.trim();
+  const port = parseInt(document.getElementById('setup-port').value) || 80;
+  if (!ip) { toast('Enter an IP address', 'error'); return; }
+  await fetch('/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({inverter_ip: ip, inverter_port: port})
+  });
+  document.getElementById('setup-overlay').classList.add('hidden');
+  toast('Config saved');
+  startPolling();
+}
+
+async function startScan() {
+  document.getElementById('scan-spinner').style.display = 'block';
+  document.getElementById('scan-results').style.display = 'none';
+  const result = await fetch('/api/scan').then(r=>r.json()).catch(()=>({found:[]}));
+  document.getElementById('scan-spinner').style.display = 'none';
+  const list = document.getElementById('scan-list');
+  if (!result.found.length) {
+    list.innerHTML = '<div style="color:var(--muted); font-size:0.85rem;">No Solplanet inverters found.</div>';
+  } else {
+    list.innerHTML = result.found.map(f => `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--surface2);border-radius:8px;margin-bottom:6px;cursor:pointer"
+           onclick="selectScanned('${f.ip}')">
+        <span style="font-weight:600">${f.ip}</span>
+        <span class="badge badge-green">${f.version}</span>
+        <span style="font-size:0.8rem;color:var(--muted)">${f.model || ''} ${f.sn || ''}</span>
+      </div>`).join('');
+  }
+  document.getElementById('scan-results').style.display = 'block';
+}
+
+function selectScanned(ip) {
+  document.getElementById('setup-ip').value = ip;
+}
+
+// ============================================================
+// Page navigation
+// ============================================================
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'analytics' && currentData) renderAnalytics(currentData);
+  if (name === 'settings' && currentData) loadSchedule();
+}
+
+// ============================================================
+// Polling
+// ============================================================
+let pollTimer = null;
+function startPolling() {
+  fetchData();
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(fetchData, 10000);
+}
+
+async function fetchData() {
+  try {
+    const data = await fetch('/api/data').then(r => {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    });
+    currentData = data;
+    document.getElementById('conn-dot').className = 'status-dot ok';
+    renderOverview(data);
+    // keep 30-point history for live chart
+    const now = new Date().toLocaleTimeString('en', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    const inv0 = data.inverter_data?.[0]?.data;
+    const bat0 = data.batteries?.[0]?.data;
+    const meter = data.meter;
+    liveHistory.push({
+      t: now,
+      pv:   inv0?.ppv ?? inv0?.pac ?? 0,
+      grid: meter?.pac ?? 0,
+      bat:  bat0?.pb ?? 0,
+      home: Math.abs((inv0?.pac ?? 0)) + Math.abs(meter?.pac ?? 0) - Math.abs(bat0?.pb ?? 0),
+    });
+    if (liveHistory.length > 30) liveHistory.shift();
+    updateLiveChart();
+    extractBatterySnList(data);
+  } catch(e) {
+    document.getElementById('conn-dot').className = 'status-dot err';
+    console.warn('Fetch error', e);
+  }
+}
+
+function extractBatterySnList(data) {
+  batterySnList = (data.batteries || []).map(b => b.sn).filter(Boolean);
+  if (!batterySnList.length && data.inverters?.length) {
+    batterySnList = data.inverters.map(i => i.sn).filter(Boolean);
+  }
+}
+
+// ============================================================
+// Overview rendering
+// ============================================================
+const INV_STATUS = {0:'Waiting',1:'Normal',2:'Error',3:'Checking'};
+const BAT_STATUS = {0:'Idle',1:'Charging',2:'Discharging',3:'Fault',4:'Standby'};
+
+function fmt(val, div, unit, dec=1) {
+  if (val == null) return '--';
+  return (val / div).toFixed(dec) + ' ' + unit;
+}
+
+function renderOverview(data) {
+  const inv0  = data.inverters?.[0] ?? {};
+  const idata = data.inverter_data?.[0]?.data ?? {};
+  const meter = data.meter ?? {};
+  const bat   = data.batteries?.[0]?.data ?? {};
+  const binfo = data.batteries?.[0]?.info ?? {};
+
+  // PV power: prefer ppv (battery data has dedicated pv field), else pac
+  const pvW  = bat.ppv ?? idata.pac ?? 0;
+  const invW = idata.pac ?? 0;
+  const gridW = meter.pac ?? 0;  // positive = import, negative = export
+  const batW  = bat.pb ?? 0;     // positive = discharging, negative = charging
+  // Home consumption estimate
+  const homeW = Math.max(0, pvW + Math.abs(batW > 0 ? batW : 0) - Math.abs(batW < 0 ? batW : 0) - (gridW < 0 ? Math.abs(gridW) : 0) + (gridW > 0 ? gridW : 0));
+
+  document.getElementById('flow-pv').textContent   = pvW  + ' W';
+  document.getElementById('flow-inv').textContent  = invW + ' W';
+  document.getElementById('flow-bat').textContent  = (batW >= 0 ? '+' : '') + batW + ' W';
+  document.getElementById('flow-grid').textContent = Math.abs(gridW) + ' W';
+  document.getElementById('flow-home').textContent = Math.round(homeW) + ' W';
+  document.getElementById('flow-grid-label').textContent = gridW > 0 ? '← Importing' : gridW < 0 ? 'Exporting →' : 'Grid';
+
+  // SOC ring
+  const soc = bat.soc ?? null;
+  document.getElementById('soc-pct').textContent = soc != null ? soc + '%' : '--';
+  if (soc != null) {
+    const circ = 2 * Math.PI * 54;
+    const offset = circ * (1 - soc / 100);
+    const circle = document.getElementById('soc-circle');
+    circle.setAttribute('stroke-dashoffset', offset.toFixed(2));
+    circle.setAttribute('stroke', soc > 60 ? 'var(--green)' : soc > 25 ? 'var(--accent)' : 'var(--red)');
+  }
+
+  document.getElementById('bat-status').textContent = BAT_STATUS[bat.bst] ?? '--';
+  document.getElementById('bat-temp').textContent   = bat.tb != null ? (bat.tb/10).toFixed(1)+'°C' : '--';
+  document.getElementById('bat-soh').textContent    = bat.soh != null ? bat.soh+'%' : '--';
+
+  // Today energy
+  document.getElementById('today-pv').textContent      = bat.etdpv != null ? (bat.etdpv/10).toFixed(1) : (idata.etd != null ? (idata.etd/10).toFixed(1) : '--');
+  document.getElementById('today-bat-in').textContent  = bat.ebi != null ? (bat.ebi/10).toFixed(1) : '--';
+  document.getElementById('today-bat-out').textContent = bat.ebo != null ? (bat.ebo/10).toFixed(1) : '--';
+  document.getElementById('today-import').textContent  = meter.itd != null ? (meter.itd/100).toFixed(2) : '--';
+  document.getElementById('today-export').textContent  = meter.otd != null ? (meter.otd/100).toFixed(2) : '--';
+  document.getElementById('total-import').textContent  = meter.iet != null ? (meter.iet/10).toFixed(1)+' kWh' : '--';
+  document.getElementById('total-export').textContent  = meter.oet != null ? (meter.oet/10).toFixed(1)+' kWh' : '--';
+
+  // Inverter
+  document.getElementById('inv-model').textContent  = inv0.mod ?? '--';
+  document.getElementById('inv-sn').textContent     = inv0.sn ?? '--';
+  document.getElementById('inv-status').textContent = INV_STATUS[idata.flg] ?? idata.flg ?? '--';
+  document.getElementById('inv-temp').textContent   = idata.tmp != null ? (idata.tmp/10).toFixed(1)+'°C' : '--';
+  document.getElementById('inv-freq').textContent   = idata.fac != null ? (idata.fac/100).toFixed(2)+' Hz' : '--';
+  document.getElementById('inv-total').textContent  = idata.eto != null ? (idata.eto/10).toFixed(1)+' kWh' : '--';
+  document.getElementById('inv-today').textContent  = idata.etd != null ? (idata.etd/10).toFixed(1)+' kWh' : '--';
+}
+
+// ============================================================
+// Analytics rendering
+// ============================================================
+function renderAnalytics(data) {
+  const idata = data.inverter_data?.[0]?.data ?? {};
+  const bat   = data.batteries?.[0]?.data ?? {};
+  const meter = data.meter ?? {};
+
+  // Lifetime battery
+  document.getElementById('life-bat-in').textContent  = bat.ebi  != null ? (bat.ebi/10).toFixed(1)+' kWh'  : '--';
+  document.getElementById('life-bat-out').textContent = bat.ebo  != null ? (bat.ebo/10).toFixed(1)+' kWh'  : '--';
+  document.getElementById('life-ac-in').textContent   = bat.eaci != null ? (bat.eaci/10).toFixed(1)+' kWh' : '--';
+  document.getElementById('life-ac-out').textContent  = bat.eaco != null ? (bat.eaco/10).toFixed(1)+' kWh' : '--';
+  document.getElementById('bat-voltage').textContent  = bat.vb   != null ? (bat.vb/100).toFixed(1)+' V'    : '--';
+  document.getElementById('bat-current').textContent  = bat.cb   != null ? (bat.cb/10).toFixed(1)+' A'     : '--';
+
+  // Lifetime inverter
+  document.getElementById('life-pv').textContent      = idata.eto != null ? (idata.eto/10).toFixed(1)+' kWh' : '--';
+  document.getElementById('life-pv-today').textContent = idata.etd != null ? (idata.etd/10).toFixed(1)+' kWh' : '--';
+  document.getElementById('life-hours').textContent    = idata.hto != null ? idata.hto+' h' : '--';
+  document.getElementById('inv-vac').textContent       = idata.vac?.[0] != null ? (idata.vac[0]/10).toFixed(1)+' V' : '--';
+  document.getElementById('inv-iac').textContent       = idata.iac?.[0] != null ? (idata.iac[0]/10).toFixed(1)+' A' : '--';
+  document.getElementById('inv-pf').textContent        = idata.pf != null ? (idata.pf/100).toFixed(2) : '--';
+
+  // Self-sufficiency (today)
+  const pvToday  = (bat.etdpv ?? idata.etd ?? 0) / 10;
+  const batOut   = (bat.ebo ?? 0) / 10;
+  const imported = (meter.itd ?? 0) / 100;
+  const exported = (meter.otd ?? 0) / 100;
+  const totalLoad = pvToday + imported - exported + batOut;
+  const selfSuf   = totalLoad > 0 ? Math.min(100, Math.round((pvToday - exported + batOut) / totalLoad * 100)) : 0;
+
+  document.getElementById('self-suf').textContent = selfSuf + '%';
+  document.getElementById('solar-contrib').textContent = pvToday.toFixed(1) + ' kWh';
+  document.getElementById('bat-contrib').textContent   = batOut.toFixed(1) + ' kWh';
+  document.getElementById('grid-dep').textContent      = imported.toFixed(2) + ' kWh';
+
+  renderEnergyChart(pvToday, imported, batOut, exported);
+  renderDonutChart(pvToday, batOut, imported);
+}
+
+// ============================================================
+// Charts
+// ============================================================
+const CHART_DEFAULTS = {
+  color: '#94a3b8',
+  plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12, padding: 12 } } },
+  scales: {
+    x: { ticks: { color: '#94a3b8', maxRotation: 0 }, grid: { color: '#2e3250' } },
+    y: { ticks: { color: '#94a3b8' }, grid: { color: '#2e3250' } },
+  }
+};
+
+function updateLiveChart() {
+  const labels = liveHistory.map(h => h.t.slice(-8));
+  const datasets = [
+    { label:'PV (W)',   data: liveHistory.map(h=>h.pv),   borderColor:'#f59e0b', tension:.3, fill:false, pointRadius:2 },
+    { label:'Grid (W)', data: liveHistory.map(h=>h.grid), borderColor:'#3b82f6', tension:.3, fill:false, pointRadius:2 },
+    { label:'Bat (W)',  data: liveHistory.map(h=>h.bat),  borderColor:'#22c55e', tension:.3, fill:false, pointRadius:2 },
+  ];
+
+  if (!liveChart) {
+    const ctx = document.getElementById('live-chart').getContext('2d');
+    liveChart = new Chart(ctx, {
+      type:'line', data:{labels, datasets},
+      options: {
+        ...CHART_DEFAULTS, animation:false, responsive:true, maintainAspectRatio:false,
+        plugins: { ...CHART_DEFAULTS.plugins },
+        scales: CHART_DEFAULTS.scales,
+      }
+    });
+  } else {
+    liveChart.data.labels = labels;
+    liveChart.data.datasets = datasets;
+    liveChart.update('none');
+  }
+}
+
+function renderEnergyChart(pvToday, imported, batOut, exported) {
+  const ctx = document.getElementById('energy-chart').getContext('2d');
+  const data = {
+    labels: ['PV Generated','Grid Imported','Battery Out','Grid Exported'],
+    datasets:[{ data:[pvToday, imported, batOut, exported],
+      backgroundColor:['#f59e0b','#ef4444','#22c55e','#3b82f6'],
+      borderRadius:6, borderWidth:0 }]
+  };
+  if (!energyChart) {
+    energyChart = new Chart(ctx, {
+      type:'bar', data,
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false} },
+        scales:{ x:{ ticks:{color:'#94a3b8'}, grid:{color:'#2e3250'} },
+                 y:{ ticks:{color:'#94a3b8', callback:v=>v.toFixed(1)+' kWh'}, grid:{color:'#2e3250'} } }
+      }
+    });
+  } else {
+    energyChart.data = data;
+    energyChart.update();
+  }
+}
+
+function renderDonutChart(pv, bat, grid) {
+  const ctx = document.getElementById('donut-chart').getContext('2d');
+  const total = pv + bat + grid || 1;
+  const data = {
+    labels:['Solar','Battery','Grid'],
+    datasets:[{ data:[pv, bat, grid],
+      backgroundColor:['#f59e0b','#22c55e','#3b82f6'],
+      borderWidth:0, hoverOffset:6 }]
+  };
+  if (!donutChart) {
+    donutChart = new Chart(ctx, {
+      type:'doughnut', data,
+      options:{
+        responsive:true, maintainAspectRatio:false, cutout:'65%',
+        plugins:{ legend:{ position:'bottom', labels:{color:'#94a3b8', padding:16} } }
+      }
+    });
+  } else {
+    donutChart.data = data;
+    donutChart.update();
+  }
+}
+
+// ============================================================
+// Settings - Work Mode
+// ============================================================
+const WORK_MODES = [
+  { name:'Self-Consumption',  type:2, mod_r:1, desc:'Use solar first, then battery, then grid' },
+  { name:'Reserve Power',     type:3, mod_r:1, desc:'Keep battery reserved for outages' },
+  { name:'Custom Mode',       type:4, mod_r:1, desc:'Manual configuration' },
+  { name:'Time of Use',       type:5, mod_r:1, desc:'Charge/discharge based on schedule' },
+  { name:'Off-Grid',          type:1, mod_r:2, desc:'Operate independently from grid' },
+];
+
+function renderModeGrid() {
+  const grid = document.getElementById('mode-grid');
+  grid.innerHTML = WORK_MODES.map((m,i) => `
+    <button class="mode-btn${selectedMode===i?' selected':''}" onclick="selectMode(${i})">
+      <div class="mode-name">${m.name}</div>
+      <div class="mode-desc">${m.desc}</div>
+    </button>
+  `).join('');
+}
+
+function selectMode(i) {
+  selectedMode = i;
+  renderModeGrid();
+}
+
+async function applyWorkMode() {
+  if (selectedMode == null) { toast('Select a mode first', 'error'); return; }
+  const mode = WORK_MODES[selectedMode];
+  const sn = batterySnList[0];
+  if (!sn) { toast('No battery SN found', 'error'); return; }
+  try {
+    const r = await fetch('/api/battery/work_mode', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ sn, type: mode.type, mod_r: mode.mod_r })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('Work mode updated');
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ============================================================
+// Settings - SOC Limits
+// ============================================================
+async function applySocLimits() {
+  const sn = batterySnList[0];
+  if (!sn) { toast('No battery SN found', 'error'); return; }
+  const soc_max = parseInt(document.getElementById('soc-max').value);
+  const soc_min = parseInt(document.getElementById('soc-min').value);
+  if (soc_min >= soc_max) { toast('Min must be less than Max', 'error'); return; }
+  try {
+    const r = await fetch('/api/battery/soc_limits', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ sn, soc_min, soc_max })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('SOC limits updated');
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+  document.getElementById('soc-sn-note').textContent = 'Battery: ' + sn;
+}
+
+// ============================================================
+// Settings - Schedule
+// ============================================================
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+async function loadSchedule() {
+  const editor = document.getElementById('schedule-editor');
+  editor.innerHTML = '<div style="text-align:center;padding:20px"><span class="spinner"></span></div>';
+  try {
+    const sched = await fetch('/api/schedule').then(r=>r.json());
+    scheduleState = {};
+    for (const day of DAYS) {
+      scheduleState[day] = (sched.days?.[day] ?? []).map(s => ({...s}));
+    }
+    // populate pin/pout
+    if (sched.Pin != null) document.getElementById('sched-pin').value = sched.Pin;
+    if (sched.Pout != null) document.getElementById('sched-pout').value = sched.Pout;
+    renderScheduleEditor();
+  } catch(e) {
+    editor.innerHTML = '<div style="color:var(--muted);font-size:0.85rem;text-align:center;padding:20px">Could not load schedule (V1 inverters or no battery).</div>';
+  }
+}
+
+function renderScheduleEditor() {
+  const editor = document.getElementById('schedule-editor');
+  editor.innerHTML = DAYS.map(day => {
+    const slots = scheduleState[day] || [];
+    return `
+      <div class="sched-day">
+        <div class="sched-day-title">${day}</div>
+        <div id="slots-${day}">
+          ${slots.map((s,i) => renderSlotRow(day, i, s)).join('')}
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="addSlot('${day}')">+ Add Slot</button>
+      </div>`;
+  }).join('<hr style="border-color:var(--border);margin:12px 0">');
+}
+
+function renderSlotRow(day, i, slot) {
+  const hours = Array.from({length:24},(_,h)=>`<option value="${h.toString().padStart(2,'0')}:00" ${slot.start===h.toString().padStart(2,'0')+':00'?'selected':''}>${h.toString().padStart(2,'0')}:00</option><option value="${h.toString().padStart(2,'0')}:30" ${slot.start===h.toString().padStart(2,'0')+':30'?'selected':''}>${h.toString().padStart(2,'0')}:30</option>`).join('');
+  return `
+    <div class="slot-editor">
+      <div class="form-group">
+        <label>Start</label>
+        <select onchange="updateSlot('${day}',${i},'start',this.value)">${hours}</select>
+      </div>
+      <div class="form-group">
+        <label>Duration (h)</label>
+        <select onchange="updateSlot('${day}',${i},'duration',parseInt(this.value))">
+          ${[1,2,3,4].map(d=>`<option value="${d}" ${slot.duration===d?'selected':''}>${d}h</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Mode</label>
+        <select onchange="updateSlot('${day}',${i},'mode',this.value)">
+          <option value="charge" ${slot.mode==='charge'?'selected':''}>Charge</option>
+          <option value="discharge" ${slot.mode==='discharge'?'selected':''}>Discharge</option>
+        </select>
+      </div>
+      <button class="btn btn-danger btn-sm" style="margin-top:18px" onclick="removeSlot('${day}',${i})">✕</button>
+    </div>`;
+}
+
+function updateSlot(day, i, field, value) {
+  scheduleState[day][i][field] = value;
+}
+
+function addSlot(day) {
+  if (!scheduleState[day]) scheduleState[day] = [];
+  if (scheduleState[day].length >= 6) { toast('Max 6 slots per day', 'error'); return; }
+  scheduleState[day].push({ start: '08:00', duration: 1, mode: 'charge' });
+  renderScheduleEditor();
+}
+
+function removeSlot(day, i) {
+  scheduleState[day].splice(i, 1);
+  renderScheduleEditor();
+}
+
+async function applySchedulePower() {
+  const pin  = parseInt(document.getElementById('sched-pin').value) || 0;
+  const pout = parseInt(document.getElementById('sched-pout').value) || 0;
+  const days = {};
+  for (const day of DAYS) { days[day] = scheduleState[day] || []; }
+  try {
+    const r = await fetch('/api/schedule', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ days, pin, pout })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('Schedule power limits updated');
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function saveSchedule() {
+  const pin  = parseInt(document.getElementById('sched-pin').value) || 0;
+  const pout = parseInt(document.getElementById('sched-pout').value) || 0;
+  const days = {};
+  for (const day of DAYS) { days[day] = scheduleState[day] || []; }
+  try {
+    const r = await fetch('/api/schedule', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ days, pin, pout })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('Schedule saved');
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ============================================================
+// Init
+// ============================================================
+window.addEventListener('DOMContentLoaded', () => {
+  renderModeGrid();
+  loadInitialConfig();
+});
+</script>
+</body>
+</html>
