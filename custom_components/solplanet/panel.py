@@ -420,7 +420,9 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     )
 
     # Register as a sidebar panel
-    await hass.components.frontend.async_register_built_in_panel(
+    from homeassistant.components import frontend
+    frontend.async_register_built_in_panel(
+        hass,
         component_name="iframe",
         sidebar_title="Solar Dashboard",
         sidebar_icon="mdi:solar-panel",
