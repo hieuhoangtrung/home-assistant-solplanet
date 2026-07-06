@@ -330,6 +330,23 @@ def _decode_schedule(raw: dict) -> dict:
     return result
 
 
+class SolplanetPanelView(HomeAssistantView):
+    """Serve the dashboard SPA at /solplanet_panel/index.html."""
+
+    url = "/solplanet_panel/index.html"
+    name = "solplanet_panel:index"
+    requires_auth = False
+
+    async def get(self, request):
+        from aiohttp.web import Response
+        html = PANEL_DIR / "index.html"
+        return Response(
+            body=html.read_bytes(),
+            content_type="text/html",
+            charset="utf-8",
+        )
+
+
 class SolplanetHistoryView(HomeAssistantView):
     """GET /api/solplanet_panel/history?hours=24 - returns recorded readings."""
 
@@ -388,24 +405,18 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     # Initialise history DB
     conn = await asyncio.get_event_loop().run_in_executor(None, _db_init, DB_PATH)
 
-    # Register API views
+    # Register API views + panel HTML view
     hass.http.register_view(SolplanetDataView)
     hass.http.register_view(SolplanetWorkModeView)
     hass.http.register_view(SolplanetSocLimitsView)
     hass.http.register_view(SolplanetScheduleView)
     hass.http.register_view(SolplanetHistoryView(conn))
+    hass.http.register_view(SolplanetPanelView)
 
     # Start background history recorder
     hass.async_create_background_task(
         _history_recorder(hass, conn),
         "solplanet_history_recorder",
-    )
-
-    # Serve the www/ directory under /solplanet_panel/
-    hass.http.register_static_path(
-        "/solplanet_panel",
-        str(PANEL_DIR),
-        cache_headers=False,
     )
 
     # Register as a sidebar panel
