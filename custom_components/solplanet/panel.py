@@ -359,25 +359,6 @@ class SolplanetPanelView(HomeAssistantView):
         )
 
 
-class SolplanetPanelAssetView(HomeAssistantView):
-    """Serve dashboard assets at /solplanet_panel/assets/{filename}."""
-
-    url = "/solplanet_panel/assets/{filename}"
-    name = "solplanet_panel:asset"
-    requires_auth = False
-
-    async def get(self, request):
-        from aiohttp.web import FileResponse, Response
-
-        filename = request.match_info.get("filename", "")
-        if "/" in filename or "\\" in filename:
-            return Response(status=404)
-        asset = PANEL_DIR / "assets" / filename
-        if not asset.is_file():
-            return Response(status=404)
-        return FileResponse(asset)
-
-
 class SolplanetHistoryView(HomeAssistantView):
     """GET /api/solplanet_panel/history?hours=24 - returns recorded readings."""
 
@@ -443,7 +424,6 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     hass.http.register_view(SolplanetScheduleView)
     hass.http.register_view(SolplanetHistoryView(conn))
     hass.http.register_view(SolplanetPanelView)
-    hass.http.register_view(SolplanetPanelAssetView)
 
     # Start background history recorder
     hass.async_create_background_task(
