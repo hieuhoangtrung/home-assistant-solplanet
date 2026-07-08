@@ -28,6 +28,10 @@ DB_PATH = Path(__file__).parent / "history.db"
 HISTORY_INTERVAL = 300  # seconds between recordings
 
 SCHEDULE_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+SCHEDULE_RAW_DAY = {
+    "Tue": "Tus",
+    "Wed": "Wen",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +291,7 @@ class SolplanetScheduleView(HomeAssistantView):
             for s in slots:
                 slot = ScheduleSlot.from_time(s["start"], s["duration"], s["mode"])
                 day_list.append(slot)
-            days_slots[day] = day_list
+            days_slots[SCHEDULE_RAW_DAY.get(day, day)] = day_list
 
         # Get first battery sn
         bat_data = coord.data.get(BATTERY_IDENTIFIER, {})
@@ -331,7 +335,11 @@ def _decode_schedule(raw: dict) -> dict:
     result: dict = {"Pin": raw.get("Pin", 0), "Pout": raw.get("Pout", 0), "days": {}}
     for day in SCHEDULE_DAYS:
         slots = []
-        for code in raw.get(day, [])[:6]:
+        raw_day = SCHEDULE_RAW_DAY.get(day, day)
+        day_codes = raw.get(day)
+        if day_codes is None:
+            day_codes = raw.get(raw_day, [])
+        for code in day_codes[:6]:
             if isinstance(code, int):
                 slot = _decode_slot(code)
                 if slot:
@@ -394,12 +402,16 @@ async def _history_recorder(hass: HomeAssistant, conn: sqlite3.Connection) -> No
                 idata = inv_data.get("data") if inv_data else None
                 bdata = bat_data_entry.get("data") if bat_data_entry else None
                 mdata = met_data_entry.get("data") if met_data_entry else None
+                app_data = met_data_entry.get("app_data", {}) if met_data_entry else {}
+                pgrid = getattr(mdata, "pac", None)
+                if pgrid is None and app_data:
+                    pgrid = app_data.get("activePower") or app_data.get("pac")
                 row = {
                     "ts":    int(time.time()),
                     "ppv":   getattr(idata, "ppv",  None) or getattr(bdata, "ppv", None),
                     "pac":   getattr(idata, "pac",  None),
                     "pbat":  getattr(bdata, "pb",   None),
-                    "pgrid": getattr(mdata, "pac",  None),
+                    "pgrid": pgrid,
                     "soc":   getattr(bdata, "soc",  None),
                     "tb":    (getattr(bdata, "tb",  None) or 0) / 10,
                 }
