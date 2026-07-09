@@ -92,6 +92,42 @@ def _serialise(obj: Any) -> Any:
     return obj
 
 
+def _number(value: Any) -> float | int | None:
+    """Best-effort numeric conversion for V1 dataclasses and V2 app payloads."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", "")
+        try:
+            parsed = float(cleaned)
+        except ValueError:
+            return None
+        return int(parsed) if parsed.is_integer() else parsed
+    return None
+
+
+def _first_number(*values: Any) -> float | int | None:
+    for value in values:
+        parsed = _number(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _meter_power(entry: dict) -> float | int | None:
+    mdata = entry.get("data")
+    app_data = entry.get("app_data", {}) or {}
+    return _first_number(
+        getattr(mdata, "pac", None),
+        app_data.get("power"),
+        app_data.get("activePower"),
+        app_data.get("pac"),
+        app_data.get("up"),
+    )
+
+
 def _get_coordinator(hass: HomeAssistant):
     """Return first available coordinator or None."""
     entries = hass.data.get(DOMAIN, {})
@@ -190,17 +226,33 @@ class SolplanetDataView(HomeAssistantView):
         for sn, entry in data.get(met_id, {}).items():
             mdata = entry.get("data")
             app_data = entry.get("app_data", {}) or {}
-            # V2: pac in app_data is negative=export, positive=import (Watts)
-            # V1: pac is on mdata directly
-            pac = getattr(mdata, "pac", None)
-            if pac is None:
-                raw = app_data.get("activePower") or app_data.get("pac")
-                pac = raw
-            itd = getattr(mdata, "itd", None) or app_data.get("importToday") or app_data.get("itd")
-            otd = getattr(mdata, "otd", None) or app_data.get("exportToday") or app_data.get("otd")
-            iet = getattr(mdata, "iet", None) or app_data.get("importTotal") or app_data.get("iet")
-            oet = getattr(mdata, "oet", None) or app_data.get("exportTotal") or app_data.get("oet")
-            meters.append({"sn": sn, "pac": pac, "itd": itd, "otd": otd, "iet": iet, "oet": oet})
+            # V2 app sensors expose `power`, `i_today`, etc.; V1 exposes dataclass fields.
+            pac = _meter_power(entry)
+            itd = _first_number(
+                getattr(mdata, "itd", None), app_data.get("i_today"),
+                app_data.get("importToday"), app_data.get("itd"),
+            )
+            otd = _first_number(
+                getattr(mdata, "otd", None), app_data.get("o_today"),
+                app_data.get("exportToday"), app_data.get("otd"),
+            )
+            iet = _first_number(
+                getattr(mdata, "iet", None), app_data.get("i_total"),
+                app_data.get("importTotal"), app_data.get("iet"),
+            )
+            oet = _first_number(
+                getattr(mdata, "oet", None), app_data.get("o_total"),
+                app_data.get("exportTotal"), app_data.get("oet"),
+            )
+            meters.append({
+                "sn": sn,
+                "pac": pac,
+                "itd": itd,
+                "otd": otd,
+                "iet": iet,
+                "oet": oet,
+                "source": "app_data" if app_data else "legacy",
+            })
 
         return self.json({
             "inverters": inverters,
@@ -402,10 +454,7 @@ async def _history_recorder(hass: HomeAssistant, conn: sqlite3.Connection) -> No
                 idata = inv_data.get("data") if inv_data else None
                 bdata = bat_data_entry.get("data") if bat_data_entry else None
                 mdata = met_data_entry.get("data") if met_data_entry else None
-                app_data = met_data_entry.get("app_data", {}) if met_data_entry else {}
-                pgrid = getattr(mdata, "pac", None)
-                if pgrid is None and app_data:
-                    pgrid = app_data.get("activePower") or app_data.get("pac")
+                pgrid = _meter_power(met_data_entry) if met_data_entry else None
                 row = {
                     "ts":    int(time.time()),
                     "ppv":   getattr(idata, "ppv",  None) or getattr(bdata, "ppv", None),
