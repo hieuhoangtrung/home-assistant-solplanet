@@ -47,24 +47,34 @@ def _db_init(db_path: Path) -> sqlite3.Connection:
             pac     REAL,
             pbat    REAL,
             pgrid   REAL,
+            pload   REAL,
             soc     REAL,
             tb      REAL
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON readings(ts)")
+    _db_ensure_column(conn, "pload", "REAL")
     conn.commit()
     return conn
 
 
+def _db_ensure_column(conn: sqlite3.Connection, name: str, col_type: str) -> None:
+    cur = conn.execute("PRAGMA table_info(readings)")
+    existing = {row[1] for row in cur.fetchall()}
+    if name not in existing:
+        conn.execute(f"ALTER TABLE readings ADD COLUMN {name} {col_type}")
+
+
 def _db_insert(conn: sqlite3.Connection, row: dict) -> None:
     conn.execute(
-        "INSERT OR REPLACE INTO readings (ts,ppv,pac,pbat,pgrid,soc,tb) VALUES (?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO readings (ts,ppv,pac,pbat,pgrid,pload,soc,tb) VALUES (?,?,?,?,?,?,?,?)",
         (
             row["ts"],
             row.get("ppv"),
             row.get("pac"),
             row.get("pbat"),
             row.get("pgrid"),
+            row.get("pload"),
             row.get("soc"),
             row.get("tb"),
         ),
@@ -74,11 +84,65 @@ def _db_insert(conn: sqlite3.Connection, row: dict) -> None:
 
 def _db_query(conn: sqlite3.Connection, since_ts: int) -> list[dict]:
     cur = conn.execute(
-        "SELECT ts,ppv,pac,pbat,pgrid,soc,tb FROM readings WHERE ts>=? ORDER BY ts",
+        "SELECT ts,ppv,pac,pbat,pgrid,pload,soc,tb FROM readings WHERE ts>=? ORDER BY ts",
         (since_ts,),
     )
-    cols = ["ts", "ppv", "pac", "pbat", "pgrid", "soc", "tb"]
+    cols = ["ts", "ppv", "pac", "pbat", "pgrid", "pload", "soc", "tb"]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def _group_rows_by_day(rows: list[dict]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    sorted_rows = sorted(rows, key=lambda r: r.get("ts") or 0)
+    for i, row in enumerate(sorted_rows):
+        ts = int(row.get("ts") or 0)
+        if not ts:
+            continue
+        day = time.strftime("%Y-%m-%d", time.localtime(ts))
+        bucket = grouped.setdefault(day, {
+            "day": day,
+            "samples": 0,
+            "pv_avg": 0,
+            "load_avg": 0,
+            "grid_import_kwh": 0,
+            "grid_export_kwh": 0,
+            "battery_charge_kwh": 0,
+            "battery_discharge_kwh": 0,
+            "soc_min": None,
+            "soc_max": None,
+        })
+        bucket["samples"] += 1
+        bucket["pv_avg"] += float(row.get("ppv") or row.get("pac") or 0)
+        bucket["load_avg"] += float(row.get("pload") or 0)
+        soc = _number(row.get("soc"))
+        if soc is not None:
+            bucket["soc_min"] = soc if bucket["soc_min"] is None else min(bucket["soc_min"], soc)
+            bucket["soc_max"] = soc if bucket["soc_max"] is None else max(bucket["soc_max"], soc)
+        if i + 1 >= len(sorted_rows):
+            continue
+        next_ts = int(sorted_rows[i + 1].get("ts") or ts)
+        dt_hours = max(0, min((next_ts - ts) / 3600, 1))
+        if dt_hours == 0:
+            continue
+        pgrid = float(row.get("pgrid") or 0)
+        pbat = float(row.get("pbat") or 0)
+        if pgrid > 0:
+            bucket["grid_import_kwh"] += pgrid * dt_hours / 1000
+        elif pgrid < 0:
+            bucket["grid_export_kwh"] += abs(pgrid) * dt_hours / 1000
+        if pbat > 0:
+            bucket["battery_charge_kwh"] += pbat * dt_hours / 1000
+        elif pbat < 0:
+            bucket["battery_discharge_kwh"] += abs(pbat) * dt_hours / 1000
+    result = []
+    for bucket in grouped.values():
+        samples = max(1, bucket["samples"])
+        bucket["pv_avg"] = round(bucket["pv_avg"] / samples, 2)
+        bucket["load_avg"] = round(bucket["load_avg"] / samples, 2)
+        for key in ("grid_import_kwh", "grid_export_kwh", "battery_charge_kwh", "battery_discharge_kwh"):
+            bucket[key] = round(bucket[key], 3)
+        result.append(bucket)
+    return sorted(result, key=lambda r: r["day"])
 
 
 def _serialise(obj: Any) -> Any:
@@ -126,6 +190,18 @@ def _meter_power(entry: dict) -> float | int | None:
         app_data.get("pac"),
         app_data.get("up"),
     )
+
+
+def _estimate_load(ppv: Any, pbat: Any, pgrid: Any) -> float | int | None:
+    pv = _number(ppv)
+    bat = _number(pbat)
+    grid = _number(pgrid)
+    if pv is None and bat is None and grid is None:
+        return None
+    # Solplanet reports battery power as positive while charging on newer app data.
+    # Home load is PV minus battery charge plus grid import.
+    load = float(pv or 0) - float(bat or 0) + float(grid or 0)
+    return max(0, round(load, 2))
 
 
 def _get_coordinator(hass: HomeAssistant):
@@ -430,14 +506,19 @@ class SolplanetHistoryView(HomeAssistantView):
         self._conn = conn
 
     async def get(self, request):
+        query = request.rel_url.query
         try:
-            hours = float(request.rel_url.query.get("hours", 24))
+            hours = float(query.get("hours", 24))
         except (ValueError, TypeError):
             hours = 24
-        since_ts = int(time.time()) - int(hours * 3600)
+        since_ts = 0 if query.get("all") == "1" else int(time.time()) - int(hours * 3600)
         rows = await asyncio.get_event_loop().run_in_executor(
             None, _db_query, self._conn, since_ts
         )
+        if query.get("group") == "day":
+            rows = await asyncio.get_event_loop().run_in_executor(
+                None, _group_rows_by_day, rows
+            )
         return self.json(rows)
 
 
@@ -455,12 +536,15 @@ async def _history_recorder(hass: HomeAssistant, conn: sqlite3.Connection) -> No
                 bdata = bat_data_entry.get("data") if bat_data_entry else None
                 mdata = met_data_entry.get("data") if met_data_entry else None
                 pgrid = _meter_power(met_data_entry) if met_data_entry else None
+                ppv = getattr(idata, "ppv", None) or getattr(bdata, "ppv", None)
+                pbat = getattr(bdata, "pb", None)
                 row = {
                     "ts":    int(time.time()),
-                    "ppv":   getattr(idata, "ppv",  None) or getattr(bdata, "ppv", None),
+                    "ppv":   ppv,
                     "pac":   getattr(idata, "pac",  None),
-                    "pbat":  getattr(bdata, "pb",   None),
+                    "pbat":  pbat,
                     "pgrid": pgrid,
+                    "pload": _estimate_load(ppv, pbat, pgrid),
                     "soc":   getattr(bdata, "soc",  None),
                     "tb":    (getattr(bdata, "tb",  None) or 0) / 10,
                 }
