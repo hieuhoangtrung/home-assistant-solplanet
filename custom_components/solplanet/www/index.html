@@ -2372,7 +2372,7 @@ function appendLiveReading(data) {
   const meter = data.meter;
   const pv = inv0?.ppv ?? inv0?.pac ?? bat0?.ppv ?? 0;
   const grid = meter?.pac ?? 0;
-  const bat = bat0?.pb ?? 0;
+  const bat = batteryPowerWatts(bat0?.pb);
   const load = explicitHomeLoad(data);
   liveHistory.push({
     ts: Date.now(),
@@ -2395,9 +2395,9 @@ async function refreshHistory() {
     liveHistory = sorted.map(r => ({
       ts: r.ts * 1000,
       pv: r.ppv ?? r.pac ?? 0,
-      load: estimateHomeLoad(r.ppv ?? r.pac ?? 0, r.pbat ?? 0, r.pgrid ?? 0, historyLoadValue(r)),
+      load: estimateHomeLoad(r.ppv ?? r.pac ?? 0, batteryPowerWatts(r.pbat), r.pgrid ?? 0, historyLoadValue(r)),
       grid: r.pgrid ?? 0,
-      bat: r.pbat ?? 0,
+      bat: batteryPowerWatts(r.pbat),
     }));
     if (!liveHistory.length && currentData) appendLiveReading(currentData);
     else updateLiveChart();
@@ -2484,6 +2484,11 @@ function historyLoadValue(row) {
   return firstNumeric(row?.pload, row?.pLoad, row?.p_load, row?.load, row?.homeLoad, row?.home_load, row?.consumption, row?.pcons);
 }
 
+function batteryPowerWatts(value) {
+  const watts = numericValue(value);
+  return watts === null ? 0 : watts;
+}
+
 function estimateHomeLoad(pvW, batW, gridW, explicitW = null) {
   const explicit = numericValue(explicitW);
   if (explicit !== null) return Math.max(0, explicit);
@@ -2491,13 +2496,13 @@ function estimateHomeLoad(pvW, batW, gridW, explicitW = null) {
   const pv = Number(pvW || 0);
   const bat = Number(batW || 0);
   const grid = Number(gridW || 0);
-  const currentConvention = pv - bat + grid;
+  const currentConvention = pv + bat + grid;
   if (Number.isFinite(currentConvention) && currentConvention > 0) return currentConvention;
 
   const candidates = [
     currentConvention,
-    pv + bat + grid,
     pv - bat - grid,
+    pv - bat + grid,
     pv + bat - grid,
   ].filter(value => Number.isFinite(value) && value > 0);
 
@@ -2644,20 +2649,11 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function numericValue(...values) {
-  for (const value of values) {
-    if (value == null || value === '') continue;
-    const parsed = Number(value);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return null;
-}
-
 function batterySocLimits(info = {}) {
   const minInput = document.getElementById('soc-min');
   const maxInput = document.getElementById('soc-max');
-  let min = numericValue(info.discharge_max, info.dischargeMax, info.discharge_limit, minInput?.value, 0);
-  let max = numericValue(info.charge_max, info.chargeMax, info.charge_limit, maxInput?.value, 100);
+  let min = firstNumeric(info.discharge_max, info.dischargeMax, info.discharge_limit, minInput?.value, 0);
+  let max = firstNumeric(info.charge_max, info.chargeMax, info.charge_limit, maxInput?.value, 100);
   min = clamp(min ?? 0, 0, 99);
   max = clamp(max ?? 100, min + 1, 100);
   return {
@@ -2686,8 +2682,8 @@ function syncSocLimitControls(limits) {
 function batteryVisualStatus(soc, watts, batteryState, limits = { min: 0, low: 15 }) {
   if (soc != null && soc <= limits.min) return 'status-critical';
   if (soc != null && soc <= limits.low) return 'status-low';
-  if (watts > 50) return 'status-charge';
-  if (watts < -50) return 'status-discharge';
+  if (watts > 50) return 'status-discharge';
+  if (watts < -50) return 'status-charge';
   if (batteryState === 3) return 'status-discharge';
   return 'status-idle';
 }
@@ -2695,8 +2691,8 @@ function batteryVisualStatus(soc, watts, batteryState, limits = { min: 0, low: 1
 function batteryDisplayState(soc, watts, batteryState, limits) {
   if (soc != null && soc <= limits.min) return t('atMinReserve');
   if (soc != null && soc <= limits.low) return t('lowBattery');
-  if (watts > 50) return t('charging');
-  if (watts < -50) return t('discharging');
+  if (watts > 50) return t('discharging');
+  if (watts < -50) return t('charging');
   return t(BAT_STATUS_KEYS[batteryState] || 'standby');
 }
 
@@ -2730,7 +2726,7 @@ function renderOverview(data) {
   const pvW  = bat.ppv ?? idata.pac ?? 0;
   const invW = idata.pac ?? 0;
   const gridW = meter.pac ?? 0;  // positive = import, negative = export
-  const batW  = bat.pb ?? 0;     // positive = charging on Solplanet app data
+  const batW  = batteryPowerWatts(bat.pb); // positive = discharging, negative = charging
   const soc = bat.soc ?? null;
   const socLimits = batterySocLimits(binfo);
   syncSocLimitControls(socLimits);
@@ -3252,18 +3248,43 @@ function dayLabel(day) {
   return t(keys[day] || day);
 }
 
+const SCHEDULE_DURATIONS = [1, 2, 3, 4];
+
+function normalizeScheduleStart(start = '08:00') {
+  const [rawHour, rawMinute] = String(start).split(':').map(value => Number(value));
+  const hour = clamp(Number.isFinite(rawHour) ? rawHour : 8, 0, 23);
+  const minute = (Number.isFinite(rawMinute) ? rawMinute : 0) >= 30 ? 30 : 0;
+  return `${String(hour).padStart(2, '0')}:${minute === 30 ? '30' : '00'}`;
+}
+
+function scheduleDurationOptions(start) {
+  const [hour] = normalizeScheduleStart(start).split(':').map(value => Number(value));
+  const maxDuration = Math.max(1, Math.min(4, 24 - hour));
+  return SCHEDULE_DURATIONS.filter(duration => duration <= maxDuration);
+}
+
+function normalizeScheduleSlot(slot = {}) {
+  const start = normalizeScheduleStart(slot.start || `${String(slot.start_hour ?? 8).padStart(2, '0')}:${String(slot.start_minute ?? 0).padStart(2, '0')}`);
+  const durations = scheduleDurationOptions(start);
+  const duration = durations.includes(Number(slot.duration)) ? Number(slot.duration) : durations[0];
+  const mode = slot.mode === 'discharge' ? 'discharge' : 'charge';
+  return { start, duration, mode };
+}
+
 function renderSlotRow(day, i, slot) {
-  const hours = Array.from({length:24},(_,h)=>`<option value="${h.toString().padStart(2,'0')}:00" ${slot.start===h.toString().padStart(2,'0')+':00'?'selected':''}>${h.toString().padStart(2,'0')}:00</option><option value="${h.toString().padStart(2,'0')}:30" ${slot.start===h.toString().padStart(2,'0')+':30'?'selected':''}>${h.toString().padStart(2,'0')}:30</option>`).join('');
+  slot = normalizeScheduleSlot(slot);
+  scheduleState[day][i] = slot;
+  const durations = scheduleDurationOptions(slot.start);
   return `
     <div class="slot-editor">
       <div class="form-group">
         <label>${t('start')}</label>
-        <select onchange="updateSlot('${day}',${i},'start',this.value)">${hours}</select>
+        <input type="time" min="00:00" max="23:30" step="1800" value="${slot.start}" onchange="updateSlot('${day}',${i},'start',this.value)"/>
       </div>
       <div class="form-group">
         <label>${t('durationHours')}</label>
-        <select onchange="updateSlot('${day}',${i},'duration',parseInt(this.value))">
-          ${[1,2,3,4].map(d=>`<option value="${d}" ${slot.duration===d?'selected':''}>${d}h</option>`).join('')}
+        <select onchange="updateSlot('${day}',${i},'duration',Number(this.value))">
+          ${durations.map(d=>`<option value="${d}" ${slot.duration===d?'selected':''}>${d}h</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
@@ -3280,8 +3301,12 @@ function renderSlotRow(day, i, slot) {
 }
 
 function updateSlot(day, i, field, value) {
-  scheduleState[day][i][field] = value;
+  const slot = { ...(scheduleState[day][i] || {}) };
+  slot[field] = field === 'duration' ? Number(value) : value;
+  const next = normalizeScheduleSlot(slot);
+  scheduleState[day][i] = next;
   markSettingsDirty('schedule');
+  if (field === 'start') renderScheduleEditor();
 }
 
 function addSlot(day) {

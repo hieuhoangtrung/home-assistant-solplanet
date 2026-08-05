@@ -131,9 +131,9 @@ def _group_rows_by_day(rows: list[dict]) -> list[dict]:
         elif pgrid < 0:
             bucket["grid_export_kwh"] += abs(pgrid) * dt_hours / 1000
         if pbat > 0:
-            bucket["battery_charge_kwh"] += pbat * dt_hours / 1000
+            bucket["battery_discharge_kwh"] += pbat * dt_hours / 1000
         elif pbat < 0:
-            bucket["battery_discharge_kwh"] += abs(pbat) * dt_hours / 1000
+            bucket["battery_charge_kwh"] += abs(pbat) * dt_hours / 1000
     result = []
     for bucket in grouped.values():
         samples = max(1, bucket["samples"])
@@ -198,9 +198,9 @@ def _estimate_load(ppv: Any, pbat: Any, pgrid: Any) -> float | int | None:
     grid = _number(pgrid)
     if pv is None and bat is None and grid is None:
         return None
-    # Solplanet reports battery power as positive while charging on newer app data.
-    # Home load is PV minus battery charge plus grid import.
-    load = float(pv or 0) - float(bat or 0) + float(grid or 0)
+    # Solplanet reports battery power as positive while discharging and negative while charging.
+    # Home load is PV plus battery discharge plus grid import.
+    load = float(pv or 0) + float(bat or 0) + float(grid or 0)
     return max(0, round(load, 2))
 
 
