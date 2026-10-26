@@ -123,7 +123,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
                         # Get existing slots for the day
                         new_slots = dict(current_schedule)
-                        day_slots = new_slots.get(call.data["day"], [])
+                        # Validate a copy so rejected slots cannot change the cached schedule.
+                        day_slots = list(new_slots.get(call.data["day"], []))
 
                         if len(day_slots) >= 6:
                             raise vol.Invalid("Cannot add more than 6 slots per day")
