@@ -21,6 +21,7 @@ from .const import (
     METER_IDENTIFIER,
 )
 from .modbus import DataType
+from .validation import is_zero_filled_battery_payload, retain_previous_battery_energy_values
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class SolplanetDataUpdateCoordinator(DataUpdateCoordinator):
         """Create instance of solplanet coordinator."""
         self.__api = api
         self.config_entry_id = config_entry_id
+        self._battery_energy_regression_candidates: dict[str, dict[str, tuple[float | int, int]]] = {}
 
         # Some dongles/inverters are very sensitive to concurrent requests.
         # Serialize update cycles to reduce timeouts/flapping.
@@ -226,6 +228,21 @@ class SolplanetDataUpdateCoordinator(DataUpdateCoordinator):
                         try:
                             data = await self.__api.get_battery_data(isn)
                             info = await self.__api.get_battery_info(isn)
+                            previous_data = prev_batteries.get(isn, {}).get("data")
+                            if is_zero_filled_battery_payload(data):
+                                _LOGGER.debug("Ignoring transient zero-filled battery data for %s", isn)
+                                data = previous_data
+                            else:
+                                candidates = self._battery_energy_regression_candidates.setdefault(isn, {})
+                                retained, confirmed = retain_previous_battery_energy_values(
+                                    data, previous_data, candidates
+                                )
+                                if not candidates:
+                                    self._battery_energy_regression_candidates.pop(isn)
+                                if retained:
+                                    _LOGGER.debug("Retaining battery energy fields for %s: %s", isn, retained)
+                                if confirmed:
+                                    _LOGGER.debug("Confirmed battery energy reset for %s: %s", isn, confirmed)
                             battery_payload[isn] = {
                                 "data": data,
                                 "info": info,
