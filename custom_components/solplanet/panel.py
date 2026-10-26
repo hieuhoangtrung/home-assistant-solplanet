@@ -12,6 +12,7 @@ from typing import Any
 
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .client import BatteryWorkModes, ScheduleSlot
 from .const import (
@@ -26,6 +27,26 @@ _LOGGER = logging.getLogger(__name__)
 PANEL_DIR = Path(__file__).parent / "www"
 DB_PATH = Path(__file__).parent / "history.db"
 HISTORY_INTERVAL = 300  # seconds between recordings
+
+HA_ENTITY_SERVICE_ALLOWLIST = {
+    ("select", "select_option"),
+    ("number", "set_value"),
+    ("switch", "turn_on"),
+    ("switch", "turn_off"),
+    ("button", "press"),
+}
+SOLPLANET_SERVICE_ALLOWLIST = {
+    "set_schedule_slots",
+    "clear_schedule",
+    "set_meter_limit_power",
+    "set_meter_limit_current",
+    "set_meter_zero_power",
+    "disable_meter_power_limit",
+}
+AUTOMATION_SERVICE_ALLOWLIST = {
+    ("automation", "trigger"),
+    ("script", "turn_on"),
+}
 
 SCHEDULE_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 SCHEDULE_RAW_DAY = {
@@ -214,12 +235,183 @@ def _get_coordinator(hass: HomeAssistant):
     return None
 
 
+def _registry_entries(hass: HomeAssistant) -> list[Any]:
+    registry = er.async_get(hass)
+    entities = getattr(registry, "entities", {})
+    if hasattr(entities, "values"):
+        return list(entities.values())
+    return list(entities)
+
+
+def _is_solplanet_entity(hass: HomeAssistant, entity_id: str) -> bool:
+    if not entity_id:
+        return False
+    entry = er.async_get(hass).async_get(entity_id)
+    return bool(entry and getattr(entry, "platform", None) == DOMAIN)
+
+
+def _is_solplanet_device(hass: HomeAssistant, device_id: str) -> bool:
+    if not device_id:
+        return False
+    device = dr.async_get(hass).async_get(device_id)
+    if not device:
+        return False
+    return any(identifier[0] == DOMAIN for identifier in device.identifiers)
+
+
+def _normalise_ids(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    return [str(value)]
+
+
+def _entity_state_payload(hass: HomeAssistant, entity_id: str) -> dict[str, Any]:
+    state = hass.states.get(entity_id)
+    if not state:
+        return {"state": None, "attributes": {}}
+    return {
+        "state": state.state,
+        "attributes": dict(state.attributes),
+        "last_changed": state.last_changed.isoformat() if state.last_changed else None,
+        "last_updated": state.last_updated.isoformat() if state.last_updated else None,
+    }
+
+
+def _entity_payload(hass: HomeAssistant, entry: Any) -> dict[str, Any]:
+    entity_id = entry.entity_id
+    state_payload = _entity_state_payload(hass, entity_id)
+    return {
+        "entity_id": entity_id,
+        "domain": entity_id.split(".", 1)[0],
+        "name": getattr(entry, "name", None) or getattr(entry, "original_name", None),
+        "device_id": getattr(entry, "device_id", None),
+        "unique_id": getattr(entry, "unique_id", None),
+        "platform": getattr(entry, "platform", None),
+        **state_payload,
+    }
+
+
+def _automation_script_entities(hass: HomeAssistant) -> dict[str, list[dict[str, Any]]]:
+    result = {"automation": [], "script": []}
+    for state in hass.states.async_all():
+        domain = state.entity_id.split(".", 1)[0]
+        if domain not in result:
+            continue
+        name = state.attributes.get("friendly_name") or getattr(state, "name", None)
+        result[domain].append({
+            "entity_id": state.entity_id,
+            "name": name or state.entity_id,
+            "state": state.state,
+            "attributes": dict(state.attributes),
+        })
+    for entries in result.values():
+        entries.sort(key=lambda item: item["name"] or item["entity_id"])
+    return result
+
+
+def _ha_context_payload(hass: HomeAssistant) -> dict[str, Any]:
+    entity_entries = [
+        entry
+        for entry in _registry_entries(hass)
+        if getattr(entry, "platform", None) == DOMAIN
+    ]
+    entity_payloads = [_entity_payload(hass, entry) for entry in entity_entries]
+    entities_by_domain: dict[str, list[dict[str, Any]]] = {}
+    for payload in entity_payloads:
+        entities_by_domain.setdefault(payload["domain"], []).append(payload)
+
+    device_registry = dr.async_get(hass)
+    device_ids = sorted({
+        payload["device_id"]
+        for payload in entity_payloads
+        if payload.get("device_id")
+    })
+    devices = []
+    for device_id in device_ids:
+        device = device_registry.async_get(device_id)
+        if not device:
+            continue
+        devices.append({
+            "id": device_id,
+            "name": device.name_by_user or device.name or device_id,
+            "manufacturer": device.manufacturer,
+            "model": device.model,
+            "serial_number": device.serial_number,
+            "identifiers": [list(identifier) for identifier in sorted(device.identifiers)],
+            "entities": [
+                payload for payload in entity_payloads if payload.get("device_id") == device_id
+            ],
+        })
+
+    ha_entities = _automation_script_entities(hass)
+    return {
+        "available": True,
+        "language": getattr(hass.config, "language", None),
+        "time_zone": str(getattr(hass.config, "time_zone", "")),
+        "unit_system": getattr(getattr(hass.config, "units", None), "name", None),
+        "devices": devices,
+        "entities": entities_by_domain,
+        "automations": ha_entities["automation"],
+        "scripts": ha_entities["script"],
+    }
+
+
+def _validate_entity_service(hass: HomeAssistant, domain: str, service_data: dict[str, Any]) -> bool:
+    entity_ids = _normalise_ids(service_data.get("entity_id"))
+    if not entity_ids:
+        return False
+    expected_domain = {
+        "select": "select",
+        "number": "number",
+        "switch": "switch",
+        "button": "button",
+    }[domain]
+    return all(
+        entity_id.startswith(f"{expected_domain}.")
+        and _is_solplanet_entity(hass, entity_id)
+        for entity_id in entity_ids
+    )
+
+
+def _validate_solplanet_service(hass: HomeAssistant, service_data: dict[str, Any]) -> bool:
+    entity_ids = _normalise_ids(service_data.get("entity_id"))
+    device_ids = _normalise_ids(service_data.get("device_id"))
+    return (
+        bool(entity_ids or device_ids)
+        and all(_is_solplanet_entity(hass, entity_id) for entity_id in entity_ids)
+        and all(_is_solplanet_device(hass, device_id) for device_id in device_ids)
+    )
+
+
+def _validate_automation_service(hass: HomeAssistant, domain: str, service_data: dict[str, Any]) -> bool:
+    valid_ids = {
+        item["entity_id"]
+        for item in _automation_script_entities(hass)[domain]
+    }
+    entity_ids = _normalise_ids(service_data.get("entity_id"))
+    return bool(entity_ids) and all(entity_id in valid_ids for entity_id in entity_ids)
+
+
+def _service_allowed(hass: HomeAssistant, domain: str, service: str, service_data: dict[str, Any]) -> bool:
+    if (domain, service) in HA_ENTITY_SERVICE_ALLOWLIST:
+        return _validate_entity_service(hass, domain, service_data)
+    if domain == DOMAIN and service in SOLPLANET_SERVICE_ALLOWLIST:
+        return _validate_solplanet_service(hass, service_data)
+    if (domain, service) in AUTOMATION_SERVICE_ALLOWLIST:
+        return _validate_automation_service(hass, domain, service_data)
+    return False
+
+
 class SolplanetDataView(HomeAssistantView):
     """GET /api/solplanet_panel/data - returns all live data."""
 
     url = "/api/solplanet_panel/data"
     name = "api:solplanet_panel:data"
-    requires_auth = False
+    requires_auth = True
 
     async def get(self, request):
         try:
@@ -342,7 +534,7 @@ class SolplanetWorkModeView(HomeAssistantView):
 
     url = "/api/solplanet_panel/work_mode"
     name = "api:solplanet_panel:work_mode"
-    requires_auth = False
+    requires_auth = True
 
     async def post(self, request):
         hass: HomeAssistant = request.app["hass"]
@@ -365,7 +557,7 @@ class SolplanetSocLimitsView(HomeAssistantView):
 
     url = "/api/solplanet_panel/soc_limits"
     name = "api:solplanet_panel:soc_limits"
-    requires_auth = False
+    requires_auth = True
 
     async def post(self, request):
         hass: HomeAssistant = request.app["hass"]
@@ -388,7 +580,7 @@ class SolplanetScheduleView(HomeAssistantView):
 
     url = "/api/solplanet_panel/schedule"
     name = "api:solplanet_panel:schedule"
-    requires_auth = False
+    requires_auth = True
 
     async def get(self, request):
         hass: HomeAssistant = request.app["hass"]
@@ -429,6 +621,63 @@ class SolplanetScheduleView(HomeAssistantView):
 
         await coord.set_battery_schedule_slots(sn, days_slots)
         await coord.set_battery_schedule_power(pin=pin, pout=pout)
+        return self.json({"ok": True})
+
+
+class SolplanetHaContextView(HomeAssistantView):
+    """GET /api/solplanet_panel/ha_context - returns HA-native dashboard context."""
+
+    url = "/api/solplanet_panel/ha_context"
+    name = "api:solplanet_panel:ha_context"
+    requires_auth = True
+
+    async def get(self, request):
+        hass: HomeAssistant = request.app["hass"]
+        return self.json(_ha_context_payload(hass))
+
+
+class SolplanetHaServiceView(HomeAssistantView):
+    """POST /api/solplanet_panel/ha_service - allowlisted HA service proxy."""
+
+    url = "/api/solplanet_panel/ha_service"
+    name = "api:solplanet_panel:ha_service"
+    requires_auth = True
+
+    async def post(self, request):
+        hass: HomeAssistant = request.app["hass"]
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return self.json({"error": "Invalid JSON body"}, status_code=400)
+
+        domain = str(body.get("domain") or "").strip()
+        service = str(body.get("service") or "").strip()
+        service_data = body.get("service_data") or body.get("data") or {}
+        target = body.get("target") or {}
+
+        if not domain or not service or not isinstance(service_data, dict) or not isinstance(target, dict):
+            return self.json({"error": "domain, service and service_data are required"}, status_code=400)
+
+        service_data = {**target, **service_data}
+        if not _service_allowed(hass, domain, service, service_data):
+            return self.json(
+                {"error": f"Service {domain}.{service} is not allowed for this target"},
+                status_code=403,
+            )
+
+        try:
+            context = request.get("ha_context") if hasattr(request, "get") else None
+            await hass.services.async_call(
+                domain,
+                service,
+                service_data,
+                blocking=True,
+                context=context,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Solplanet HA service proxy failed: %s", exc)
+            return self.json({"error": str(exc)}, status_code=500)
+
         return self.json({"ok": True})
 
 
@@ -495,12 +744,28 @@ class SolplanetPanelView(HomeAssistantView):
         )
 
 
+class SolplanetPanelAssetView(HomeAssistantView):
+    """Serve dashboard assets at /solplanet_panel/assets/{filename}."""
+
+    url = "/solplanet_panel/assets/{filename}"
+    name = "solplanet_panel:assets"
+    requires_auth = False
+
+    async def get(self, request):
+        from aiohttp.web import FileResponse
+        filename = request.match_info.get("filename", "")
+        asset = PANEL_DIR / "assets" / filename
+        if not asset.is_file() or asset.parent != PANEL_DIR / "assets":
+            return self.json({"error": "Asset not found"}, status_code=404)
+        return FileResponse(asset)
+
+
 class SolplanetHistoryView(HomeAssistantView):
     """GET /api/solplanet_panel/history?hours=24 - returns recorded readings."""
 
     url = "/api/solplanet_panel/history"
     name = "api:solplanet_panel:history"
-    requires_auth = False
+    requires_auth = True
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
@@ -567,8 +832,11 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     hass.http.register_view(SolplanetWorkModeView)
     hass.http.register_view(SolplanetSocLimitsView)
     hass.http.register_view(SolplanetScheduleView)
+    hass.http.register_view(SolplanetHaContextView)
+    hass.http.register_view(SolplanetHaServiceView)
     hass.http.register_view(SolplanetHistoryView(conn))
     hass.http.register_view(SolplanetPanelView)
+    hass.http.register_view(SolplanetPanelAssetView)
 
     # Start background history recorder
     hass.async_create_background_task(

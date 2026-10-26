@@ -43,3 +43,6 @@ htmlcov/
 # Logs
 *.log
 
+# Runtime dashboard data
+dashboard/history.db
+custom_components/solplanet/history.db
